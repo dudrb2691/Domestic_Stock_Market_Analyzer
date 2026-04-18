@@ -20,30 +20,30 @@ st.markdown("""
 <style>
 /* 본문 및 일반 텍스트 크기 */
 .stMarkdown p, .stMarkdown li {
-    font-size: 18px !important;
+    font-size: 22px !important;
     line-height: 1.8 !important; /* 줄 간격을 넓혀서 읽기 편하게 */
 }
 
 /* 버튼 텍스트 크기 및 굵기 */
 .stButton button {
-    font-size: 18px !important;
+    font-size: 22px !important;
     font-weight: bold !important;
 }
 
 /* 입력창 및 검색창(Selectbox) 텍스트 크기 */
 .stTextInput input, .stSelectbox div[data-baseweb="select"] {
-    font-size: 18px !important;
+    font-size: 22px !important;
 }
 
 /* 탭(분석, 차트, 뉴스) 텍스트 크기 */
 .stTabs [data-baseweb="tab"] {
-    font-size: 18px !important;
+    font-size: 22px !important;
     font-weight: bold !important;
 }
 
 /* 사이드바 텍스트 크기 */
 [data-testid="stSidebar"] p {
-    font-size: 16px !important;
+    font-size: 20px !important;
 }
 </style>
 """, unsafe_allow_html=True)
