@@ -12,6 +12,42 @@ import email.utils # 날짜 정렬을 위해 추가
 
 # 1. 페이지 설정
 st.set_page_config(page_title="엄마표 주식 투자 가이드", page_icon="🛒", layout="wide")
+# 1. 페이지 설정 (기존 코드)
+st.set_page_config(page_title="엄마표 주식 투자 가이드", page_icon="🛒", layout="wide")
+
+# --- 🪄 어머니를 위한 돋보기 기능 (전체 글씨 크기 키우기) ---
+st.markdown("""
+<style>
+/* 본문 및 일반 텍스트 크기 */
+.stMarkdown p, .stMarkdown li {
+    font-size: 18px !important;
+    line-height: 1.8 !important; /* 줄 간격을 넓혀서 읽기 편하게 */
+}
+
+/* 버튼 텍스트 크기 및 굵기 */
+.stButton button {
+    font-size: 18px !important;
+    font-weight: bold !important;
+}
+
+/* 입력창 및 검색창(Selectbox) 텍스트 크기 */
+.stTextInput input, .stSelectbox div[data-baseweb="select"] {
+    font-size: 18px !important;
+}
+
+/* 탭(분석, 차트, 뉴스) 텍스트 크기 */
+.stTabs [data-baseweb="tab"] {
+    font-size: 18px !important;
+    font-weight: bold !important;
+}
+
+/* 사이드바 텍스트 크기 */
+[data-testid="stSidebar"] p {
+    font-size: 16px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+# --------------------------------------------------------
 
 # 2. API 및 모델 설정 (Secrets 활용)
 try:
