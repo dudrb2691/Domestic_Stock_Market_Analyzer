@@ -3,4 +3,4 @@ google-generativeai
 yfinance
 pandas
 plotly
-finance-data-reader
+finance-datareader
