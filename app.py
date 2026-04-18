@@ -13,7 +13,7 @@ import email.utils
 # 1. 페이지 설정
 st.set_page_config(page_title="엄마표 주식 투자 가이드", page_icon="🛒", layout="wide")
 
-# --- 🪄 어머니를 위한 돋보기 기능 (전체 글씨 크기 키우기) ---
+# --- 🪄 어머니를 위한 돋보기 기능 ---
 st.markdown("""
 <style>
     html, body, [class*="css"] { font-size: 22px !important; }
@@ -22,7 +22,6 @@ st.markdown("""
     .stTextInput input, .stSelectbox div[data-baseweb="select"] { font-size: 22px !important; }
     .stTabs [data-baseweb="tab"] { font-size: 22px !important; font-weight: bold !important; }
     [data-testid="stSidebar"] p { font-size: 20px !important; }
-    .metric-card { background-color: #f0f2f6; padding: 20px; border-radius: 10px; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -30,7 +29,6 @@ st.markdown("""
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    # 최신 정보를 더 잘 파악하는 모델 설정
     model = genai.GenerativeModel('gemini-3-flash-preview')
 except KeyError:
     st.error("🔒 'GEMINI_API_KEY'가 설정되지 않았습니다.")
@@ -77,7 +75,6 @@ if selected_display:
     if company_name not in st.session_state.history:
         st.session_state.history.append(company_name)
 
-    # 데이터 미리 가져오기 (재무 데이터)
     stock_info = yf.Ticker(full_ticker)
     
     tab1, tab2, tab3 = st.tabs(["📋 전문 분석 리포트", "📈 주가 그래프", "📰 최신 뉴스"])
@@ -85,46 +82,39 @@ if selected_display:
     with tab1:
         if company_name in st.session_state.analyses:
             st.markdown(st.session_state.analyses[company_name])
-            if st.button("🔄 다시 분석하기"):
+            if st.button("🔄 최신 내용으로 다시 분석하기"):
                 del st.session_state.analyses[company_name]
                 st.rerun()
         else:
             if st.button(f"🚀 {company_name} 정밀 분석 시작", type="primary"):
                 with st.spinner("전문가 모드로 살림살이와 시장 동향을 파악 중입니다..."):
-                    # 1. 실제 재무 데이터 추출 (최근 연간 실적)
                     try:
-                        income_stmt = stock_info.income_stmt.iloc[:, :3] # 최근 3년
+                        income_stmt = stock_info.income_stmt.iloc[:, :3]
                         financial_summary = income_stmt.to_string()
-                        current_price = stock_info.info.get('currentPrice', '데이터 없음')
-                        target_low = stock_info.info.get('targetLowPrice', '데이터 없음')
-                        target_mean = stock_info.info.get('targetMeanPrice', '데이터 없음')
                     except:
                         financial_summary = "재무 데이터를 직접 가져오지 못했습니다. 검색 결과를 참고합니다."
-                        current_price = "확인 중"
-                        target_mean = "확인 중"
 
-                    # 2. 강화된 프롬프트
+                    # 🔥 목표가 편차를 줄이고, 증권사별 리스트를 요구하는 강력한 프롬프트 적용
                     prompt = f"""
                     당신은 50대 주식 투자자를 위한 친절한 수석 애널리스트입니다. 
-                    '{company_name}'({ticker_code})에 대해 다음 4가지 핵심 영역을 정밀 분석해 주세요.
+                    '{company_name}'(종목코드: {ticker_code})에 대해 분석해 주세요.
 
                     [데이터 참고 정보]
-                    - 현재 주가: {current_price}
-                    - 최근 재무제표 요약:
-                    {financial_summary}
+                    - 최근 재무제표 요약: {financial_summary}
 
                     [요청 사항]
-                    1. **재무제표의 진실**: 제공된 수치를 바탕으로 매출과 이익이 실제로 늘고 있는지 분석하세요. '살림살이' 비유를 곁들여 "돈을 진짜로 벌고 있는 회사인가?"를 명확히 답하세요.
-                    2. **큰손들의 움직임 (외국인/기관/공매도)**: 최근 이 회사를 외국인과 기관이 사고 있는지, 아니면 팔고 있는지 검색하여 알려주세요. 특히 '공매도(나중에 떨어질 걸 기대하고 미리 파는 세력)'가 많은지도 주부의 눈높이에서 "동네 소문이나 시장 분위기"에 비유해 설명하세요.
-                    3. **목표 주가 비교**: 금융기관(증권사)들이 제시하는 평균 목표가({target_mean})를 언급하고, 당신(제미나이)이 판단하는 이 회사의 미래 가치를 고려한 '제미나이 목표가'를 조심스럽게 제시해 주세요.
-                    4. **신호등 및 한줄평**: 🟢/🟡/🔴 기호와 함께 구체적인 투자 전략을 제시하세요.
-
+                    1. **수치로 보는 살림살이**: 재무제표 수치를 바탕으로 "돈을 진짜로 잘 벌고 있는지" 주부의 언어로 분석하세요.
+                    2. **누가 사고 있나요?**: 최근 외국인/기관의 매수, 매도 동향과 공매도 이슈를 동네 소문이나 시장 분위기에 비유해 설명하세요.
+                    3. **증권사별 목표 주가 (중요!)**: 당신이 알고 있는 최신 정보를 바탕으로, 국내 주요 증권사(예: KB증권, NH투자증권, 삼성증권, 한국투자증권 등 최소 3곳)들이 제시한 이 종목의 최근 목표가를 명확히 구분해서 나열하세요. (우선주라면 보통주 기준 목표가임을 명시하고 우선주 예상 가격을 덧붙이세요.)
+                    4. **AI 종합 의견 (극보수적 접근 필수)**: 위 증권사들의 의견 중 '가장 낮은 수치'를 기준으로 하거나 그보다 더 보수적으로 낮춰 잡으세요. 절대로 낙관적이거나 희망적인 전망을 섞지 마세요. "원금 손실 방지"를 최우선으로 하여, 주가가 떨어져도 안심할 수 있는 가장 보수적이고 안전한 최저 목표 가격대 하나만 딱 정해서 제시하세요. 기대치를 확 낮추는 현실적인 조언을 반드시 덧붙이세요.
+                    5. **마크다운 주의사항 (필수!)**: 금액이나 비율 등 숫자의 범위를 나타낼 때 절대로 물결기호(~)를 사용하지 마세요! 화면에서 글자에 줄이 그어지는 오류가 납니다. 반드시 '에서' 또는 하이픈(-)을 사용하세요. (예: 50만원에서 60만원)
+                    
                     [출력 형식]
-                    ### 🚦 한눈에 보는 신호등
-                    ### 💰 1. 수치로 보는 살림살이 (재무제표)
-                    ### 👥 2. 누가 사고 있나요? (외국인/기관/공매도 동향)
-                    ### 🎯 3. 얼마까지 갈까요? (목표 주가 비교)
-                    ### 💡 엄마를 위한 최종 조언
+                    ### 🚦 한눈에 보는 신호등 (🟢안전 / 🟡주의 / 🔴위험)
+                    ### 💰 1. 수치로 보는 살림살이
+                    ### 👥 2. 최근 시장의 분위기 (외국인/기관 동향)
+                    ### 🎯 3. 전문가들은 얼마까지 갈 거라 보나요? (증권사별 목표가)
+                    ### 💡 4. AI 애널리스트의 최종 조언 (현실적 목표가 포함)
                     """
                     
                     response = model.generate_content(prompt)
@@ -142,8 +132,7 @@ if selected_display:
             close = data['Close']
             if isinstance(close, pd.DataFrame): close = close.iloc[:, 0]
             fig = go.Figure(data=[go.Scatter(x=data.index, y=close, line=dict(color='#FF4B4B', width=3))])
-            fig.update_layout(template="plotly_white", margin=dict(l=20, r=20, t=20, b=20),
-                              font=dict(size=18), hovermode='x unified')
+            fig.update_layout(template="plotly_white", margin=dict(l=20, r=20, t=20, b=20), font=dict(size=18), hovermode='x unified')
             st.plotly_chart(fig, use_container_width=True)
 
     with tab3:
