@@ -9,6 +9,7 @@ import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 import email.utils
+import re # HTML 태그 제거용
 
 # 1. 페이지 설정
 st.set_page_config(page_title="엄마표 주식 투자 가이드", page_icon="🛒", layout="wide")
@@ -87,15 +88,16 @@ if selected_display:
                 st.rerun()
         else:
             if st.button(f"🚀 {company_name} 정밀 분석 시작", type="primary"):
-                with st.spinner("전문가 모드로 실시간 실적, 수급, 목표가 뉴스를 종합 분석 중입니다... 🔍"):
-                    # 1. 기본 재무 데이터 (과거 흐름 파악용)
+                with st.spinner("전문가 모드로 가장 최근 분기 실적과 오늘의 뉴스를 분석 중입니다... 🔍"):
+                    
+                    # 🔥 [수정 1] 연간 실적 대신 '최근 4분기 실적' 가져오기
                     try:
-                        income_stmt = stock_info.income_stmt.iloc[:, :3]
+                        income_stmt = stock_info.quarterly_income_stmt.iloc[:, :4] 
                         financial_summary = income_stmt.to_string()
                     except:
-                        financial_summary = "과거 재무 데이터를 가져오지 못했습니다."
+                        financial_summary = "최근 분기 재무 데이터를 가져오지 못했습니다."
 
-                    # 🔥 [수정된 부분] 실적, 수급(외국인/기관), 목표가 뉴스를 폭넓게 15개까지 검색합니다.
+                    # 🔥 [수정 2] 뉴스 헤드라인 뿐만 아니라 '요약 내용(Description)'까지 추출
                     latest_news_context = ""
                     try:
                         query = urllib.parse.quote(f"{company_name} 실적 OR 목표가 OR 외국인 OR 기관")
@@ -108,36 +110,44 @@ if selected_display:
                         news_list = []
                         for item in items:
                             pub_date_obj = email.utils.parsedate_to_datetime(item.find('pubDate').text)
-                            news_list.append({'title': item.find('title').text, 'date_obj': pub_date_obj})
+                            title = item.find('title').text
+                            # HTML 태그를 제거하여 순수 텍스트 요약본만 가져옵니다.
+                            desc_raw = item.find('description').text if item.find('description') is not None else ""
+                            desc_clean = re.sub('<[^<]+>', '', desc_raw).strip()
+                            
+                            news_list.append({'title': title, 'desc': desc_clean, 'date_obj': pub_date_obj})
                         
                         news_list.sort(key=lambda x: x['date_obj'], reverse=True)
                         
-                        # AI가 최신 흐름을 확실히 읽도록 기사 개수를 15개로 늘렸습니다.
                         for news in news_list[:15]: 
-                            latest_news_context += f"- {news['title']} (발행일: {news['date_obj'].strftime('%Y-%m-%d')})\n"
+                            latest_news_context += f"- [{news['date_obj'].strftime('%Y-%m-%d')}] {news['title']}\n  요약: {news['desc'][:100]}...\n"
                     except Exception as e:
                         latest_news_context = "최신 뉴스를 검색하지 못했습니다."
 
-                    # 🔥 [수정된 프롬프트] 모든 섹션(살림살이, 수급, 목표가)에 실시간 뉴스를 최우선으로 반영하라고 지시
+                    # 🔥 [수정 3] 현재 날짜 명시 및 과거 데이터 사용 엄격 금지
+                    today_date = datetime.now().strftime("%Y년 %m월 %d일")
+                    
                     prompt = f"""
                     당신은 50대 주식 투자자를 위한 친절하고 극도로 보수적인 수석 애널리스트입니다. 
+                    🚨 중요: 오늘은 {today_date}입니다. 과거 연도(예: 2024년, 2025년)의 데이터를 마치 미래의 예상치인 것처럼 설명하는 심각한 오류를 절대 범하지 마세요. 
                     '{company_name}'(종목코드: {ticker_code})에 대해 분석해 주세요.
 
                     [실시간 데이터 참고 정보 - 절대적으로 신뢰할 것!]
-                    1. 기본 재무제표 요약 (과거 흐름 참고용): {financial_summary}
-                    2. 🚨 가장 최신 실시간 뉴스 헤드라인 (이번 분기 실적, 수급 동향, 목표가 포함 - 이 정보를 최우선으로 반영하세요!):
+                    1. 최근 4분기 재무제표 요약 (가장 최근의 분기 흐름을 파악하세요): 
+                    {financial_summary}
+                    2. 🚨 오늘({today_date}) 기준 가장 최신 실시간 뉴스 헤드라인 및 요약 (이번 분기 실적, 수급 동향, 목표가 포함 - 이 정보를 최우선으로 반영하세요!):
                     {latest_news_context}
 
                     [요청 사항]
-                    1. **수치로 보는 살림살이 (최신 실적 위주)**: 제공된 '실시간 뉴스 헤드라인'에 이번 분기 실적(영업이익 흑자/적자 전환, 어닝 서프라이즈/쇼크 등)이 있다면 그것을 가장 먼저 언급하세요. 과거 재무제표보다 최근 뉴스의 실적 동향을 우선하여 "지금 현재 돈을 진짜로 잘 벌고 있는지" 주부의 언어로 분석하세요.
-                    2. **누가 사고 있나요? (최신 수급 반영)**: '실시간 뉴스 헤드라인'에 언급된 가장 최근의 외국인과 기관 매수/매도 동향을 반드시 파악하여 동네 소문이나 시장 분위기에 비유해 설명하세요.
-                    3. **증권사별 최신 목표 주가 (필수!)**: 오직 위 [실시간 뉴스 헤드라인]만을 바탕으로, 가장 최근 날짜에 증권사 5곳이 발표한 구체적인 목표가를 나열하세요.
-                    4. **AI 종합 의견 (극보수적 접근 필수)**: 위 증권사들의 의견 중 '가장 낮은 수치'를 기준으로 하거나 그보다 더 보수적으로 낮춰 잡으세요. 절대로 낙관적이거나 희망적인 전망을 섞지 마세요. "원금 손실 방지"를 최우선으로 하여, 주가가 떨어져도 안심할 수 있는 가장 보수적이고 안전한 최저 목표 가격대 하나만 딱 정해서 제시하세요.
+                    1. **수치로 보는 살림살이 (가장 최근 분기 기준)**: 제공된 '최근 4분기 재무제표'와 '실시간 뉴스 요약'을 바탕으로, "가장 최근 분기에 장사를 잘했는지"를 주부의 언어로 분석하세요. 절대 과거 연간 데이터를 미래 예상치로 둔갑시키지 마세요.
+                    2. **누가 사고 있나요? (최신 수급 반영)**: '실시간 뉴스'에 언급된 가장 최근의 외국인/기관 매수/매도 동향을 반드시 파악하여 동네 소문이나 시장 분위기에 비유해 설명하세요.
+                    3. **증권사별 최신 목표 주가 (필수!)**: 오직 위 [실시간 뉴스 헤드라인]만을 바탕으로, 가장 최근 날짜에 증권사들이 발표한 구체적인 목표가를 나열하세요.
+                    4. **AI 종합 의견 (극보수적 접근 필수)**: 위 증권사들의 의견 중 '가장 낮은 수치'를 기준으로 하거나 그보다 더 보수적으로 낮춰 잡으세요. 절대로 낙관적이거나 희망적인 전망을 섞지 마세요. 주가가 떨어져도 안심할 수 있는 가장 보수적이고 안전한 최저 목표 가격대 하나만 딱 정해서 제시하세요.
                     5. **마크다운 주의사항 (필수!)**: 금액이나 비율 등 숫자의 범위를 나타낼 때 절대로 물결기호(~)를 사용하지 마세요! 화면에서 글자에 줄이 그어지는 오류가 납니다. 반드시 '에서' 또는 하이픈(-)을 사용하세요. (예: 50만원에서 60만원)
 
                     [출력 형식]
                     ### 🚦 한눈에 보는 신호등 (🟢안전 / 🟡주의 / 🔴위험)
-                    ### 💰 1. 수치로 보는 살림살이 (최신 실적 반영)
+                    ### 💰 1. 수치로 보는 살림살이 (최근 분기 실적 반영)
                     ### 👥 2. 최근 시장의 분위기 (최신 수급 동향)
                     ### 🎯 3. 전문가들은 얼마까지 갈 거라 보나요? (실시간 최신 목표가)
                     ### 💡 4. AI 애널리스트의 최종 조언 (초보수적 접근)
