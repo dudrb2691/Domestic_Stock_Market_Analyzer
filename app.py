@@ -87,34 +87,58 @@ if selected_display:
                 st.rerun()
         else:
             if st.button(f"🚀 {company_name} 정밀 분석 시작", type="primary"):
-                with st.spinner("전문가 모드로 살림살이와 시장 동향을 파악 중입니다..."):
+                with st.spinner("전문가 모드로 실시간 시장 동향과 최신 리포트를 수집 중입니다... 🔍"):
                     try:
                         income_stmt = stock_info.income_stmt.iloc[:, :3]
                         financial_summary = income_stmt.to_string()
                     except:
-                        financial_summary = "재무 데이터를 직접 가져오지 못했습니다. 검색 결과를 참고합니다."
+                        financial_summary = "재무 데이터를 가져오지 못했습니다."
 
-                    # 🔥 목표가 편차를 줄이고, 증권사별 리스트를 요구하는 강력한 프롬프트 적용
+                    # 🔥 [핵심 추가 기능] 분석 직전에 '실시간 목표가 뉴스'를 몰래 검색해서 가져옵니다!
+                    latest_target_news = ""
+                    try:
+                        query = urllib.parse.quote(f"{company_name} 목표가 OR 증권사 리포트")
+                        url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
+                        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                        response = urllib.request.urlopen(req)
+                        root = ET.fromstring(response.read())
+                        items = root.findall('.//item')
+                        
+                        news_list = []
+                        for item in items:
+                            pub_date_obj = email.utils.parsedate_to_datetime(item.find('pubDate').text)
+                            news_list.append({'title': item.find('title').text, 'date_obj': pub_date_obj})
+                        
+                        news_list.sort(key=lambda x: x['date_obj'], reverse=True)
+                        
+                        for news in news_list[:7]: # 가장 최근 기사 7개 추출
+                            latest_target_news += f"- {news['title']} (발행일: {news['date_obj'].strftime('%Y-%m-%d')})\n"
+                    except Exception as e:
+                        latest_target_news = "최신 목표가 뉴스를 검색하지 못했습니다."
+
+                    # 🔥 프롬프트에 실시간 뉴스를 주입하고 절대 과거 기억에 의존하지 말라고 경고합니다.
                     prompt = f"""
-                    당신은 50대 주식 투자자를 위한 친절한 수석 애널리스트입니다. 
+                    당신은 50대 주식 투자자를 위한 친절하고 극도로 보수적인 수석 애널리스트입니다. 
                     '{company_name}'(종목코드: {ticker_code})에 대해 분석해 주세요.
 
-                    [데이터 참고 정보]
-                    - 최근 재무제표 요약: {financial_summary}
+                    [실시간 데이터 참고 정보 - 절대적으로 신뢰할 것!]
+                    1. 최근 재무제표 요약: {financial_summary}
+                    2. 🚨 오늘자 실시간 증권사 목표가 관련 뉴스 헤드라인 (가장 중요!):
+                    {latest_target_news}
 
                     [요청 사항]
                     1. **수치로 보는 살림살이**: 재무제표 수치를 바탕으로 "돈을 진짜로 잘 벌고 있는지" 주부의 언어로 분석하세요.
                     2. **누가 사고 있나요?**: 최근 외국인/기관의 매수, 매도 동향과 공매도 이슈를 동네 소문이나 시장 분위기에 비유해 설명하세요.
-                    3. **증권사별 목표 주가 (중요!)**: 당신이 알고 있는 최신 정보를 바탕으로, 국내 주요 증권사(예: KB증권, NH투자증권, 삼성증권, 한국투자증권 등 최소 3곳)들이 제시한 이 종목의 최근 목표가를 명확히 구분해서 나열하세요. (우선주라면 보통주 기준 목표가임을 명시하고 우선주 예상 가격을 덧붙이세요.)
+                    3. **증권사별 최신 목표 주가 (필수!)**: 과거의 기억은 지우고, 제가 위에서 제공한 [오늘자 실시간 증권사 목표가 관련 뉴스 헤드라인]만을 꼼꼼히 읽은 뒤, 가장 최근 날짜에 증권사(KB증권, 하나증권 등)가 발표한 구체적인 목표가를 나열하세요. 만약 제공된 뉴스에 구체적인 최신 가격이 없다면 억지로 지어내지 말고 "최근 며칠간 증권사에서 새로 발표한 뚜렷한 목표가가 없습니다"라고 솔직하게 말씀하세요.
                     4. **AI 종합 의견 (극보수적 접근 필수)**: 위 증권사들의 의견 중 '가장 낮은 수치'를 기준으로 하거나 그보다 더 보수적으로 낮춰 잡으세요. 절대로 낙관적이거나 희망적인 전망을 섞지 마세요. "원금 손실 방지"를 최우선으로 하여, 주가가 떨어져도 안심할 수 있는 가장 보수적이고 안전한 최저 목표 가격대 하나만 딱 정해서 제시하세요. 기대치를 확 낮추는 현실적인 조언을 반드시 덧붙이세요.
                     5. **마크다운 주의사항 (필수!)**: 금액이나 비율 등 숫자의 범위를 나타낼 때 절대로 물결기호(~)를 사용하지 마세요! 화면에서 글자에 줄이 그어지는 오류가 납니다. 반드시 '에서' 또는 하이픈(-)을 사용하세요. (예: 50만원에서 60만원)
-                    
+
                     [출력 형식]
                     ### 🚦 한눈에 보는 신호등 (🟢안전 / 🟡주의 / 🔴위험)
                     ### 💰 1. 수치로 보는 살림살이
                     ### 👥 2. 최근 시장의 분위기 (외국인/기관 동향)
-                    ### 🎯 3. 전문가들은 얼마까지 갈 거라 보나요? (증권사별 목표가)
-                    ### 💡 4. AI 애널리스트의 최종 조언 (현실적 목표가 포함)
+                    ### 🎯 3. 전문가들은 얼마까지 갈 거라 보나요? (실시간 최신 목표가)
+                    ### 💡 4. AI 애널리스트의 최종 조언 (초보수적 접근)
                     """
                     
                     response = model.generate_content(prompt)
