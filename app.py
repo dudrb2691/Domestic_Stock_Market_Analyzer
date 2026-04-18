@@ -1,104 +1,129 @@
 import streamlit as st
 import google.generativeai as genai
+import yfinance as yf
+import pandas as pd
+import plotly.graph_objects as go
+import FinanceDataReader as fdr
+from datetime import datetime, timedelta
 
-# 1. 페이지 기본 설정
-st.set_page_config(
-    page_title="엄마표 주식 투자 가이드",
-    page_icon="🛒",
-    layout="centered"
-)
+# 1. 페이지 설정
+st.set_page_config(page_title="엄마표 주식 투자 가이드", page_icon="🛒", layout="wide")
 
-# 2. 세션 상태 초기화 (분석 결과 유지용)
-if "analysis_result" not in st.session_state:
-    st.session_state.analysis_result = None
-if "analyzed_company" not in st.session_state:
-    st.session_state.analyzed_company = None
-
-# 3. UI 헤더 구성
-st.title("🛒 엄마표 주식 투자 가이드")
-st.markdown("""
-어렵고 복잡한 주식 이야기, **장바구니 물가 확인하듯** 쉽고 편안하게 풀어드려요!  
-궁금한 회사 이름을 입력하시면 우리 집 살림살이에 비유해서 꼼꼼히 분석해 드립니다.
-""")
-
-# 4. API 키 설정 (Streamlit Secrets 활용)
-# 로컬에서는 .streamlit/secrets.toml 파일에, 배포 시에는 Streamlit 설정에 GEMINI_API_KEY를 입력해 주세요.
+# 2. API 및 모델 설정 (Secrets 활용)
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-3-flash-preview')
 except KeyError:
-    st.error("🔒 API 키가 설정되지 않았습니다. Streamlit Secrets에 'GEMINI_API_KEY'를 추가해 주세요.")
-    st.stop() # API 키가 없으면 더 이상 실행하지 않음
+    st.error("🔒 'GEMINI_API_KEY'가 설정되지 않았습니다.")
+    st.stop()
 
-# 5. 메인 화면 - 종목 입력
-st.markdown("---")
-company_name = st.text_input("🔍 궁금한 국내 주식 종목명을 입력해 주세요 (예: 삼성전자, 현대차)", placeholder="여기에 종목명을 입력하세요")
+# 3. 데이터 캐싱 - 상장사 목록 불러오기 (자동완성용)
+@st.cache_data
+def get_stock_list():
+    # 한국 거래소 종목 리스트 (KOSPI, KOSDAQ)
+    df_krx = fdr.StockListing('KRX')
+    # "종목명 (티커)" 형식으로 리스트 생성
+    df_krx['display_name'] = df_krx['Name'] + " (" + df_krx['Code'] + ")"
+    return df_krx[['display_name', 'Code', 'Name', 'Market']]
 
-# 6. 분석 실행 버튼 및 로직
-if st.button("분석 시작하기", type="primary"):
-    if not company_name:
-        st.warning("종목명을 입력해 주세요!")
-    else:
-        try:
-            # 모델 설정 (버전 업데이트 및 오류가 나던 persona 파라미터 삭제)
-            model = genai.GenerativeModel('gemini-3-flash-preview')
+stock_df = get_stock_list()
 
-            # 기획하신 프롬프트를 시스템 지시어 형태로 재구성
-            prompt = f"""
-            당신은 50대 주식 초보자(주부)의 눈높이에 맞춰 친절하고 알기 쉽게 주식을 설명해 주는 다정한 금융 전문가입니다.
-            사용자가 검색한 국내 주식 종목: '{company_name}'에 대해 아래의 지침과 구조에 맞추어 완벽한 보고서를 작성해 주세요.
+# 4. 세션 상태 초기화
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-            [분석 지침]
-            1. "이 회사, 살림살이 튼튼한가요?" (재무 상태 분석)
-               - 부채비율, 유보율 대신 '통장 잔고', '빚', '비상금' 같은 가정집 살림에 비유해서 설명하세요.
-               - 주부 입장에서 이 회사가 망하지 않고 배당금이나 수익을 줄 만큼 튼실한 '부자 회사'인지 딱 잘라 말해 주세요.
-            2. "요즘 바깥 경기가 이 회사에 도움 되나요?" (경제 지표 분석)
-               - 금리, 환율, 유가 등 최근 경제 상황이 이 회사에게 호재인지 악재인지 아주 쉽게 설명하세요.
-               - 재료비가 오르는지, 물건 팔 때 이득을 보는지 등을 일상 언어로 연결해 주세요.
-            3. "이번에 성적표(실적 발표) 잘 나왔나요?" (실적 발표 요약)
-               - 최근 실적을 '학교 성적표'처럼 요약해 주세요.
-               - 지난번보다 점수가 올랐는지, 시장(선생님)에게 혼나고 있는지 설명하세요.
-               - 가장 칭찬받을 만한 점 1개와 조심해야 할 '주의사항' 1개를 콕 집어주세요.
-
-            [출력 형식 (반드시 아래 마크다운 구조를 지켜서 출력하세요)]
-            
-            ### 📌 3줄 요약
-            (전체적인 상황을 가장 먼저 3줄의 글머리 기호로 요약)
-
-            ### 🚦 현재 상태 
-            (🟢 맑음/안심, 🟡 흐림/주의, 🔴 비/위험 중 현재 상태에 맞는 기호를 하나만 크게 표시하고, 그 이유를 짧게 1~2문장으로 설명)
-
-            ### 🏠 1. 이 회사, 살림살이 튼튼한가요?
-            (내용)
-
-            ### 🌍 2. 요즘 바깥 경기가 이 회사에 도움 되나요?
-            (내용)
-
-            ### 📝 3. 이번에 성적표 잘 나왔나요?
-            (내용)
-
-            ### 💡 한 줄 조언
-            (구체적인 행동 지침: 예 - "지금은 좀 더 기다려보세요", "조금씩 모아가도 좋은 시기입니다" 등)
-            """
-
-            # 로딩 스피너 표시
-            with st.spinner(f"'{company_name}'의 살림살이와 성적표를 꼼꼼히 분석하고 있습니다... 돋보기 쓰는 중 🔍"):
-                response = model.generate_content(prompt)
-
-            # 안전 필터 차단 여부 확인
-            if not response.parts:
-                st.warning("⚠️ 해당 종목에 대한 응답이 안전 필터에 의해 차단되었습니다. 다른 종목명을 시도해 주세요.")
-            else:
-                # 세션 상태에 결과 저장
-                st.session_state.analysis_result = response.text
-                st.session_state.analyzed_company = company_name
-
-        except Exception as e:
-            st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
-            st.info("API 키가 정확한지, 또는 일시적인 네트워크 오류가 아닌지 확인해 주세요.")
-
-# 7. 저장된 분석 결과 표시 (페이지 재실행 시에도 유지)
-if st.session_state.analysis_result:
-    st.success(f"'{st.session_state.analyzed_company}' 분석이 완료되었습니다!")
+# --- 사이드바: 즐겨찾기 및 이전 기록 ---
+with st.sidebar:
+    st.header("⭐ 나의 관심 목록")
+    user_name = st.text_input("사용자 이름을 입력하세요 (예: 엄마)", value="엄마")
+    st.caption(f"{user_name}님의 검색 기록이 이번 세션 동안 유지됩니다.")
+    
+    if st.session_state.history:
+        st.write("🕒 최근 본 종목")
+        for h_item in reversed(st.session_state.history[-5:]):
+            st.markdown(f"- 🔍 {h_item}")
     st.markdown("---")
-    st.markdown(st.session_state.analysis_result)
+    st.info("💡 Gmail 연동은 보안 설정이 복잡하여, 현재는 창을 닫기 전까지 기록이 유지되도록 만들었습니다.")
+
+# --- 메인 화면 ---
+st.title("🛒 엄마표 주식 투자 가이드")
+
+# 기능 2: 자동 완성 검색창
+selected_display = st.selectbox(
+    "🔍 궁금한 회사 이름을 입력해 보세요",
+    options=[""] + stock_df['display_name'].tolist(),
+    format_func=lambda x: "회사명을 선택하세요" if x == "" else x,
+    help="한 글자만 입력해도 관련 회사가 모두 나옵니다."
+)
+
+if selected_display:
+    # 선택된 정보 추출
+    row = stock_df[stock_df['display_name'] == selected_display].iloc[0]
+    ticker_code = row['Code']
+    company_name = row['Name']
+    # 한국 주식은 티커 뒤에 .KS(코스피) 또는 .KQ(코스닥)가 필요
+    market = row['Market']
+    suffix = ".KQ" if market == 'KOSDAQ' else ".KS"
+    full_ticker = ticker_code + suffix
+
+    if company_name not in st.session_state.history:
+        st.session_state.history.append(company_name)
+
+    # 탭 구성 (분석, 차트, 뉴스)
+    tab1, tab2, tab3 = st.tabs(["📋 엄마표 분석", "📈 주가 그래프", "📰 최신 뉴스"])
+
+    with tab1:
+        if st.button(f"{company_name} 분석 시작하기", type="primary"):
+            with st.spinner("살림살이를 꼼꼼히 살피는 중..."):
+                prompt = f"'{company_name}'(종목코드: {ticker_code})에 대해 50대 주부 눈높이에서 재무상태(살림살이), 경제상황(바깥경기), 실적(성적표)을 분석해줘. 3줄요약, 신호등 표시, 한 줄 조언을 포함해줘."
+                response = model.generate_content(prompt)
+                if response.parts:
+                    st.markdown(response.text)
+                else:
+                    st.warning("⚠️ 해당 종목에 대한 응답이 안전 필터에 의해 차단되었습니다.")
+
+    with tab2:
+        # 기능 1: 주가 그래프 (기간 선택)
+        st.subheader(f"📊 {company_name} 주가 흐름")
+        period_map = {"1일": "1d", "1주": "5d", "1달": "1mo", "1년": "1y", "5년": "5y"}
+        selected_period = st.radio("기간 선택", list(period_map.keys()), horizontal=True)
+        
+        data = yf.download(full_ticker, period=period_map[selected_period])
+        if not data.empty:
+            close = data['Close']
+            if isinstance(close, pd.DataFrame):
+                close = close.iloc[:, 0]
+            fig = go.Figure(data=[go.Scatter(x=data.index, y=close, line=dict(color='#FF4B4B'))])
+            fig.update_layout(template="plotly_white", margin=dict(l=20, r=20, t=20, b=20))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.write("주가 정보를 불러올 수 없습니다. (코스닥 종목인 경우 .KQ를 확인해야 합니다)")
+
+    with tab3:
+        # 기능 3: 최신 뉴스 표시
+        st.subheader(f"🗞️ {company_name} 소식")
+        stock_info = yf.Ticker(full_ticker)
+        try:
+            news = stock_info.news
+            # yfinance 버전에 따라 뉴스 구조가 다를 수 있음
+            if isinstance(news, dict):
+                news = news.get('news', [])
+            if news:
+                for item in news[:5]:
+                    title = item.get('title', '제목 없음')
+                    link = item.get('link', item.get('url', '#'))
+                    publisher = item.get('publisher', '알 수 없음')
+                    pub_time = item.get('providerPublishTime')
+                    st.write(f"🔗 [{title}]({link})")
+                    if pub_time:
+                        st.caption(f"출처: {publisher} | 발행일: {datetime.fromtimestamp(pub_time)}")
+                    else:
+                        st.caption(f"출처: {publisher}")
+            else:
+                st.write("최근 뉴스 데이터가 없습니다.")
+        except Exception:
+            st.write("뉴스 데이터를 불러올 수 없습니다.")
+
+else:
+    st.write("분석할 회사를 위 검색창에서 선택해 주세요!")
