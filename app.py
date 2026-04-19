@@ -123,7 +123,7 @@ if selected_display:
                     except Exception as e:
                         naver_info = "네이버 증권 정보를 불러오지 못했습니다."
 
-                    # 2. 구글 최신 뉴스 검색 (14일 이내 철통 방어 필터 적용)
+                    # 2. 구글 최신 뉴스 검색 (3개월 이내 철통 방어 필터 적용)
                     latest_news_context = ""
                     try:
                         query = urllib.parse.quote(f"{company_name} (실적 OR 목표가 OR 증권사 리포트) when:3m")
@@ -133,7 +133,7 @@ if selected_display:
                         root = ET.fromstring(response.read())
                         items = root.findall('.//item')
                         
-                        cutoff_date = datetime.now(timezone.utc) - timedelta(days=14)
+                        cutoff_date = datetime.now(timezone.utc) - timedelta(days=92)
                         news_list = []
                         
                         for item in items:
@@ -147,9 +147,9 @@ if selected_display:
                         news_list.sort(key=lambda x: x['date_obj'], reverse=True)
                         
                         if not news_list:
-                            latest_news_context = "최근 14일 이내에 발표된 유의미한 실적이나 목표가 뉴스가 없습니다."
+                            latest_news_context = "최근 3개월 이내에 발표된 유의미한 실적이나 목표가 뉴스가 없습니다."
                         else:
-                            for news in news_list[:15]: 
+                            for news in news_list[:30]: 
                                 latest_news_context += f"- [{news['date_obj'].strftime('%Y-%m-%d')}] {news['title']}\n  요약: {news['desc'][:100]}...\n"
                     except Exception as e:
                         latest_news_context = "최신 뉴스를 검색하지 못했습니다."
