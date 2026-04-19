@@ -4,3 +4,5 @@ yfinance
 pandas
 plotly
 finance-datareader
+beautifulsoup4
+requests

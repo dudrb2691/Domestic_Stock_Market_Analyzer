@@ -4,12 +4,14 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 import FinanceDataReader as fdr
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 import email.utils
-import re # HTML 태그 제거용
+import re
+import requests # 네이버 웹페이지 통신용
+from bs4 import BeautifulSoup # 네이버 웹페이지 텍스트 추출용
 
 # 1. 페이지 설정
 st.set_page_config(page_title="엄마표 주식 투자 가이드", page_icon="🛒", layout="wide")
@@ -88,69 +90,98 @@ if selected_display:
                 st.rerun()
         else:
             if st.button(f"🚀 {company_name} 정밀 분석 시작", type="primary"):
-                with st.spinner("전문가 모드로 가장 최근 분기 실적과 오늘의 뉴스를 분석 중입니다... 🔍"):
+                with st.spinner("전문가 모드로 네이버 증권, 실시간 뉴스, 재무제표를 종합 분석 중입니다... 🔍"):
                     
-                    # 🔥 [수정 1] 연간 실적 대신 '최근 4분기 실적' 가져오기
+                    # 1. 최근 4분기 실적 가져오기
                     try:
                         income_stmt = stock_info.quarterly_income_stmt.iloc[:, :4] 
                         financial_summary = income_stmt.to_string()
                     except:
                         financial_summary = "최근 분기 재무 데이터를 가져오지 못했습니다."
 
-                    # 🔥 [수정 2] 뉴스 헤드라인 뿐만 아니라 '요약 내용(Description)'까지 추출
+                    # 🔥 [새로 추가된 기능] 네이버 증권 실시간 크롤링 (기업 개요 및 지표)
+                    naver_info = ""
+                    try:
+                        naver_url = f"https://finance.naver.com/item/main.naver?code={ticker_code}"
+                        # 네이버 금융의 한글 깨짐을 방지하기 위해 requests 사용 및 EUC-KR 인코딩 설정
+                        res = requests.get(naver_url, headers={'User-Agent': 'Mozilla/5.0'})
+                        res.encoding = 'euc-kr' 
+                        soup = BeautifulSoup(res.text, 'html.parser')
+                        
+                        summary_info = soup.select_one('.summary_info p')
+                        if summary_info:
+                            naver_info += f"- [네이버 증권 기업개요] {summary_info.get_text(strip=True)}\n"
+                            
+                        per = soup.select_one('#_per')
+                        pbr = soup.select_one('#_pbr')
+                        dividend = soup.select_one('#_dvr')
+                        
+                        naver_info += "- [실시간 투자 지표] "
+                        if per: naver_info += f"PER(주가수익비율): {per.text}배 / "
+                        if pbr: naver_info += f"PBR(주가순자산비율): {pbr.text}배 / "
+                        if dividend: naver_info += f"배당수익률: {dividend.text}%"
+                    except Exception as e:
+                        naver_info = "네이버 증권 정보를 불러오지 못했습니다."
+
+                    # 2. 구글 최신 뉴스 검색 (14일 이내 철통 방어 필터 적용)
                     latest_news_context = ""
                     try:
-                        query = urllib.parse.quote(f"{company_name} 실적 OR 목표가 OR 외국인 OR 기관")
+                        query = urllib.parse.quote(f"{company_name} (실적 OR 목표가 OR 증권사 리포트) when:3m")
                         url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
                         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                         response = urllib.request.urlopen(req)
                         root = ET.fromstring(response.read())
                         items = root.findall('.//item')
                         
+                        cutoff_date = datetime.now(timezone.utc) - timedelta(days=14)
                         news_list = []
+                        
                         for item in items:
                             pub_date_obj = email.utils.parsedate_to_datetime(item.find('pubDate').text)
-                            title = item.find('title').text
-                            # HTML 태그를 제거하여 순수 텍스트 요약본만 가져옵니다.
-                            desc_raw = item.find('description').text if item.find('description') is not None else ""
-                            desc_clean = re.sub('<[^<]+>', '', desc_raw).strip()
-                            
-                            news_list.append({'title': title, 'desc': desc_clean, 'date_obj': pub_date_obj})
+                            if pub_date_obj >= cutoff_date:
+                                title = item.find('title').text
+                                desc_raw = item.find('description').text if item.find('description') is not None else ""
+                                desc_clean = re.sub('<[^<]+>', '', desc_raw).strip()
+                                news_list.append({'title': title, 'desc': desc_clean, 'date_obj': pub_date_obj})
                         
                         news_list.sort(key=lambda x: x['date_obj'], reverse=True)
                         
-                        for news in news_list[:15]: 
-                            latest_news_context += f"- [{news['date_obj'].strftime('%Y-%m-%d')}] {news['title']}\n  요약: {news['desc'][:100]}...\n"
+                        if not news_list:
+                            latest_news_context = "최근 14일 이내에 발표된 유의미한 실적이나 목표가 뉴스가 없습니다."
+                        else:
+                            for news in news_list[:15]: 
+                                latest_news_context += f"- [{news['date_obj'].strftime('%Y-%m-%d')}] {news['title']}\n  요약: {news['desc'][:100]}...\n"
                     except Exception as e:
                         latest_news_context = "최신 뉴스를 검색하지 못했습니다."
 
-                    # 🔥 [수정 3] 현재 날짜 명시 및 과거 데이터 사용 엄격 금지
+                    # 🔥 [수정된 프롬프트] 네이버 증권 정보와 PB 페르소나 적용
                     today_date = datetime.now().strftime("%Y년 %m월 %d일")
                     
                     prompt = f"""
-                    당신은 50대 주식 투자자를 위한 친절하고 극도로 보수적인 수석 애널리스트입니다. 
-                    🚨 중요: 오늘은 {today_date}입니다. 과거 연도(예: 2024년, 2025년)의 데이터를 마치 미래의 예상치인 것처럼 설명하는 심각한 오류를 절대 범하지 마세요. 
-                    '{company_name}'(종목코드: {ticker_code})에 대해 분석해 주세요.
+                    당신은 50대 주식 투자자의 자산을 안전하게 관리해주는 '친절하고 객관적인 수석 자산관리사(PB)'입니다.
+                    오늘은 {today_date}입니다. 과거의 데이터를 미래인 것처럼 말하지 마세요.
 
-                    [실시간 데이터 참고 정보 - 절대적으로 신뢰할 것!]
-                    1. 최근 4분기 재무제표 요약 (가장 최근의 분기 흐름을 파악하세요): 
+                    [실시간 데이터 (절대 규칙: 아래 제공된 정보만 사용할 것!)]
+                    1. 📌 네이버 증권 최신 기업 정보 (가장 먼저 읽어보고 회사의 기본기를 파악하세요):
+                    {naver_info}
+                    2. 📊 최근 4분기 재무제표 요약: 
                     {financial_summary}
-                    2. 🚨 오늘({today_date}) 기준 가장 최신 실시간 뉴스 헤드라인 및 요약 (이번 분기 실적, 수급 동향, 목표가 포함 - 이 정보를 최우선으로 반영하세요!):
+                    3. 🚨 오늘({today_date}) 기준 최신 뉴스 요약본:
                     {latest_news_context}
 
                     [요청 사항]
-                    1. **수치로 보는 살림살이 (가장 최근 분기 기준)**: 제공된 '최근 4분기 재무제표'와 '실시간 뉴스 요약'을 바탕으로, "가장 최근 분기에 장사를 잘했는지"를 주부의 언어로 분석하세요. 절대 과거 연간 데이터를 미래 예상치로 둔갑시키지 마세요.
-                    2. **누가 사고 있나요? (최신 수급 반영)**: '실시간 뉴스'에 언급된 가장 최근의 외국인/기관 매수/매도 동향을 반드시 파악하여 동네 소문이나 시장 분위기에 비유해 설명하세요.
-                    3. **증권사별 최신 목표 주가 (필수!)**: 오직 위 [실시간 뉴스 헤드라인]만을 바탕으로, 가장 최근 날짜에 증권사들이 발표한 구체적인 목표가를 나열하세요.
-                    4. **AI 종합 의견 (극보수적 접근 필수)**: 위 증권사들의 의견 중 '가장 낮은 수치'를 기준으로 하거나 그보다 더 보수적으로 낮춰 잡으세요. 절대로 낙관적이거나 희망적인 전망을 섞지 마세요. 주가가 떨어져도 안심할 수 있는 가장 보수적이고 안전한 최저 목표 가격대 하나만 딱 정해서 제시하세요.
-                    5. **마크다운 주의사항 (필수!)**: 금액이나 비율 등 숫자의 범위를 나타낼 때 절대로 물결기호(~)를 사용하지 마세요! 화면에서 글자에 줄이 그어지는 오류가 납니다. 반드시 '에서' 또는 하이픈(-)을 사용하세요. (예: 50만원에서 60만원)
+                    1. **어떤 회사인가요? & 살림살이**: [네이버 증권 기업개요]를 바탕으로 이 회사가 주로 무슨 일을 하는지 아주 짧게 소개한 뒤, [투자 지표(PER/PBR)]와 [최근 분기 실적/뉴스]를 엮어서 "지금 주가가 비싼 편인지, 장사는 잘하고 있는지"를 주부의 언어로 브리핑하세요.
+                    2. **누가 사고 있나요?**: 위 '최신 뉴스 요약본'에 등장하는 최근 수급 동향(외국인/기관)을 설명하세요. 뉴스가 없다면 생략하세요.
+                    3. **증권사별 최신 목표 주가**: 위 '최신 뉴스 요약본'에 명시된 목표가만 나열하세요. 뉴스에 목표가가 없다면 "최근 14일간 뉴스로 발표된 새로운 목표가는 없습니다"라고 정직하게 답하세요. 과거 기억으로 지어내면 안 됩니다.
+                    4. **자산관리사(PB)의 균형 잡힌 조언**: 무조건 겁을 주거나 부추기지 마세요. 제공된 네이버 증권의 배당수익률이나 기업 지표, 뉴스를 종합하여 이 주식의 '호재(기회)' 1가지와 '악재(주의점)' 1가지를 공정하게 설명하고, 어머니께 추천하는 현실적인 매매 전략(분할 매수, 관망 등)을 제안하세요.
+                    5. **마크다운 주의사항**: 숫자의 범위를 나타낼 때 물결기호(~)를 절대 사용하지 말고 '에서'나 하이픈(-)을 사용하세요.
 
                     [출력 형식]
-                    ### 🚦 한눈에 보는 신호등 (🟢안전 / 🟡주의 / 🔴위험)
-                    ### 💰 1. 수치로 보는 살림살이 (최근 분기 실적 반영)
-                    ### 👥 2. 최근 시장의 분위기 (최신 수급 동향)
-                    ### 🎯 3. 전문가들은 얼마까지 갈 거라 보나요? (실시간 최신 목표가)
-                    ### 💡 4. AI 애널리스트의 최종 조언 (초보수적 접근)
+                    ### 🚦 한눈에 보는 투자 매력도 (🟢관심 / 🟡관망 / 🔴주의)
+                    ### 🏢 1. 어떤 회사이고, 살림살이는 어떤가요? (네이버 증권 지표 포함)
+                    ### 👥 2. 최근 시장의 분위기
+                    ### 🎯 3. 전문가들의 최신 목표가 (뉴스 출처 기반)
+                    ### 💡 4. 자산관리사의 균형 잡힌 조언
                     """
                     
                     response = model.generate_content(prompt)
